@@ -1,114 +1,108 @@
 using System;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using Unity.Collections;
 
-namespace NativeArrayBuffers {
-public class NativeArrayBuffer<T> : IDisposable where T : struct
+namespace NativeArrayBuffers 
 {
-    private readonly NativeArray<T>[] _buffer;
-    private readonly bool          [] _released;
-
-    public NativeArray<T> this[int index] => _buffer[index];
-
-    public int       BufferCount { get;              }
-    public int       Length      { get;              }
-    public Allocator Allocator   { get;              }
-    public bool      IsDisposed  { get; private set; }
-
-    public int ReleasedCount => _released.Count(isReleased => isReleased);
-
-    public NativeArrayBuffer(int bufferCount, int length, Allocator allocator = Allocator.Persistent)
+    public class NativeArrayBuffer<T> : IDisposable where T : struct
     {
-        _buffer   = new NativeArray<T>[bufferCount];
-        _released = new bool          [bufferCount];
+        private readonly NativeArray<T>[] _buffer;
+        private readonly bool[]           _released;
 
-        BufferCount = bufferCount;
-        Length      = length;
-        Allocator   = allocator;
+        public int       BufferCount { get;              }
+        public int       Length      { get;              }
+        public Allocator Allocator   { get;              }
+        public bool      IsDisposed  { get; private set; }
 
-        for (var i = 0; i < bufferCount; i++)
+        public int ReleasedCount => _released.Count(isReleased => isReleased);
+
+        public NativeArrayBuffer(int bufferCount, int length, Allocator allocator = Allocator.Persistent)
         {
-            _buffer  [i] = new NativeArray<T>(length, allocator);
-            _released[i] = true;
+            _buffer   = new NativeArray<T>[bufferCount];
+            _released = new bool[bufferCount];
+
+            BufferCount = bufferCount;
+            Length      = length;
+            Allocator   = allocator;
+
+            for (var i = 0; i < bufferCount; i++)
+            {
+                _buffer  [i] = new NativeArray<T>(length, allocator);
+                _released[i] = true;
+            }
         }
-    }
 
-    private bool GetReleasedIndex(out int bufferIndex)
-    {
-        if (IsDisposed)
+        public struct BufferHandle : IDisposable
         {
-            bufferIndex = -1;
+            private NativeArrayBuffer<T> _parent;
+            private int                  _index;
+
+            public NativeArray<T> Array;
+
+            internal BufferHandle(NativeArrayBuffer<T> parent, int index, NativeArray<T> array)
+            {
+                _parent = parent;
+                _index  = index;
+                Array   = array;
+            }
+
+            public void Dispose()
+            {
+                _parent.Release(_index);
+                _parent = null; 
+                _index = -1;
+            }
+        }
+
+        public bool TryRent(out BufferHandle handle)
+        {
+            if (IsDisposed)
+            {
+                handle = default;
+                return false;
+            }
+
+            for (var i = 0; i < _released.Length; i++)
+            {
+                if (!_released[i])
+                {
+                    continue;
+                }
+
+                _released[i] = false; 
+                handle = new BufferHandle(this, i, _buffer[i]);
+                return true;
+            }
+
+            handle = default;
             return false;
         }
 
-        for (var i = 0; i < _released.Length; i++)
+        private void Release(int bufferIndex)
         {
-            if (!_released[i])
+            _released[bufferIndex] = true;
+        }
+
+        public void Dispose()
+        {
+            // CAUTION:
+            // Dispose method does not dispose the buffers that are not released yet.
+            // It is the caller's responsibility to release all buffers before calling Dispose.
+
+            if (IsDisposed)
             {
-                continue;
+                return;
             }
 
-            _released[i] = false;
-            bufferIndex  = i;
-
-            return true;
-        }
-
-        bufferIndex = -1;
-
-        return false;
-    }
-
-    public ref NativeArray<T> GetRef(out int bufferIndex)
-    {
-        // NOTE:
-        // It cannot use ternary operator when the return type is ref.
-
-        if (GetReleasedIndex(out bufferIndex))
-        {
-            return ref _buffer[bufferIndex];
-        }
-        else
-        {
-            return ref Unsafe.NullRef<NativeArray<T>>();
-        }
-    }
-
-    public NativeArray<T> Get(out int bufferIndex)
-    {
-        return GetReleasedIndex(out bufferIndex) ? _buffer[bufferIndex] : Unsafe.NullRef<NativeArray<T>>();
-    }
-
-    public void Release(int bufferIndex)
-    {
-        if (bufferIndex < 0 || _buffer.Length <= bufferIndex)
-        {
-            throw new ArgumentOutOfRangeException(nameof(bufferIndex));
-        }
-
-        if (_released[bufferIndex])
-        {
-            throw new InvalidOperationException($"Buffer index { bufferIndex } is already released.");
-        }
-
-        _released[bufferIndex] = true;
-    }
-
-    // CAUTION:
-    // Dispose method does not dispose the buffers that are not released yet.
-    // It is the caller's responsibility to release all buffers before calling Dispose.
-
-    public void Dispose()
-    {
-        for (var i = 0; i < _buffer?.Length; i++)
-        {
-            if (_buffer[i].IsCreated && _released[i])
+            for (var i = 0; i < _buffer?.Length; i++)
             {
-                _buffer[i].Dispose();
+                if (_buffer[i].IsCreated && _released[i])
+                {
+                    _buffer[i].Dispose();
+                }
             }
-        }
 
-        IsDisposed = ReleasedCount == _released.Length;
+            IsDisposed = ReleasedCount == _released.Length;
+        }
     }
-}}
+}
