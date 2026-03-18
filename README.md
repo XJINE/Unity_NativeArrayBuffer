@@ -13,25 +13,31 @@ https://github.com/XJINE/Unity_NativeArrayBuffer.git?path=Assets/Packages/Native
 ## How to use
 
 ```
-private NativeArrayBuffer<T> _Tbuffers;
+private NativeArrayBuffer<T>    _Tbuffers;
+private AsyncGPUReadbackRequest _request;
 ~
-var nativeArrayRef = _Tbuffers.GetRef(out var bufferIndex);
 
-if (bufferIndex != -1)
+if (_Tbuffers.TryRent(out var bufferHandle))
 {
 	var sizeBytes = ~;
 
-	AsyncGPUReadback.RequestIntoNativeArray(ref nativeArrayRef, ~Buffer, sizeBytes, 0,
-	(request) =>
+	_request = AsyncGPUReadback.RequestIntoNativeArray
+	(ref bufferHandle.Array, ~Buffer, sizeBytes, 0, (request) =>
 	{
-		// Sometimes NativeArrayBuffer is already disposed when the callback is invoked.
-		if (request.hasError || _Tbuffers == null)
+		if (request.hasError)
 		{
 			return;
 		}
 
-		~_Tbuffers[bufferIndex];~
-		~_Tbuffers.Release(bufferIndex);
+		~use bufferHandle.Array~
+		bufferHandle.Dispose();
 	});
+}
+
+void OnDestroy()
+{
+	// Once the last request is finished, all requests are complete.
+	_request.WaitForCompletion();
+	_Tbuffers?.Dispose();
 }
 ```
