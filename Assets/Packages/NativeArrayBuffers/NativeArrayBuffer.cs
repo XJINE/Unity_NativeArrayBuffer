@@ -95,6 +95,10 @@ public class NativeArrayBuffer<T> : IDisposable where T : struct
         _released[bufferIndex] = true;
     }
 
+    // CAUTION:
+    // Dispose method does not dispose the buffers that are not released yet.
+    // It is the caller's responsibility to release all buffers before calling Dispose.
+
     public void Dispose()
     {
         for (var i = 0; i < _buffer?.Length; i++)
@@ -105,6 +109,6 @@ public class NativeArrayBuffer<T> : IDisposable where T : struct
             }
         }
 
-        IsDisposed = true;
+        IsDisposed = ReleasedCount == _released.Length;
     }
 }}
