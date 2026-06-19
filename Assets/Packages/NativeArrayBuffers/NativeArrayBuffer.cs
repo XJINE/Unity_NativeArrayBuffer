@@ -1,25 +1,26 @@
 using System;
 using System.Linq;
 using Unity.Collections;
+using UnityEngine;
 
-namespace NativeArrayBuffers 
+namespace NativeArrayBuffers
 {
     public class NativeArrayBuffer<T> : IDisposable where T : struct
     {
         private readonly NativeArray<T>[] _buffer;
-        private readonly bool[]           _released;
+        private readonly bool[]           _available;
 
         public int       BufferCount { get;              }
         public int       Length      { get;              }
         public Allocator Allocator   { get;              }
         public bool      IsDisposed  { get; private set; }
 
-        public int ReleasedCount => _released.Count(isReleased => isReleased);
+        public int AvailableCount => _available.Count(isAvailable => isAvailable);
 
         public NativeArrayBuffer(int bufferCount, int length, Allocator allocator = Allocator.Persistent)
         {
-            _buffer   = new NativeArray<T>[bufferCount];
-            _released = new bool[bufferCount];
+            _buffer    = new NativeArray<T>[bufferCount];
+            _available = new bool[bufferCount];
 
             BufferCount = bufferCount;
             Length      = length;
@@ -27,8 +28,8 @@ namespace NativeArrayBuffers
 
             for (var i = 0; i < bufferCount; i++)
             {
-                _buffer  [i] = new NativeArray<T>(length, allocator);
-                _released[i] = true;
+                _buffer   [i] = new NativeArray<T>(length, allocator);
+                _available[i] = true;
             }
         }
 
@@ -48,9 +49,14 @@ namespace NativeArrayBuffers
 
             public void Dispose()
             {
+                if (_parent == null)
+                {
+                    return;
+                }
+
                 _parent.Release(_index);
-                _parent = null; 
-                _index = -1;
+                _parent = null;
+                _index  = -1;
             }
         }
 
@@ -62,14 +68,14 @@ namespace NativeArrayBuffers
                 return false;
             }
 
-            for (var i = 0; i < _released.Length; i++)
+            for (var i = 0; i < _available.Length; i++)
             {
-                if (!_released[i])
+                if (!_available[i])
                 {
                     continue;
                 }
 
-                _released[i] = false; 
+                _available[i] = false;
                 handle = new BufferHandle(this, i, _buffer[i]);
                 return true;
             }
@@ -80,29 +86,47 @@ namespace NativeArrayBuffers
 
         private void Release(int bufferIndex)
         {
-            _released[bufferIndex] = true;
+            if (IsDisposed
+            || bufferIndex < 0
+            || _available.Length <= bufferIndex
+            || _available[bufferIndex])
+            {
+                return;
+            }
+
+            _available[bufferIndex] = true;
         }
 
         public void Dispose()
         {
-            // CAUTION:
-            // Dispose method does not dispose the buffers that are not released yet.
-            // It is the caller's responsibility to release all buffers before calling Dispose.
-
             if (IsDisposed)
             {
                 return;
             }
 
-            for (var i = 0; i < _buffer?.Length; i++)
+            var leakedCount = 0;
+
+            for (var i = 0; i < _buffer.Length; i++)
             {
-                if (_buffer[i].IsCreated && _released[i])
+                if (!_available[i])
+                {
+                    leakedCount++;
+                }
+
+                if (_buffer[i].IsCreated)
                 {
                     _buffer[i].Dispose();
                 }
+
+                _available[i] = false;
             }
 
-            IsDisposed = ReleasedCount == _released.Length;
+            if (0 < leakedCount)
+            {
+                Debug.LogWarning($"{nameof(NativeArrayBuffer<T>)} was disposed while {leakedCount} buffer(s) were still rented.");
+            }
+
+            IsDisposed = true;
         }
     }
 }
